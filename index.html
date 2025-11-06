@@ -1,0 +1,285 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8">
+	<title>WA COVID metrics</title>
+	<meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+	<link href="https://api.mapbox.com/mapbox-gl-js/v2.5.0/mapbox-gl.css" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+	<script src="https://api.mapbox.com/mapbox-gl-js/v2.5.0/mapbox-gl.js"></script>
+	<style>
+		:root{
+			--bg:#f6f7fb;
+			--card:#ffffff;
+			--muted:#6b7280;
+			--accent:#1f2937;
+			--shadow: 0 6px 20px rgba(31,41,55,0.12);
+			--panel-gap: 20px; /* space between panels and used for top spacing */
+			--appbar-top: 12px;
+			--appbar-height: 56px;
+		}
+
+		html,body{height:100%;}
+		body { margin:0; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:var(--bg); }
+
+		#map { position:absolute; inset:0; }
+
+		/* top app bar */
+		.appbar{position:absolute;top:var(--appbar-top);left:12px;right:12px;display:flex;align-items:center;justify-content:space-between;z-index:3;height:var(--appbar-height);}
+        .brand{background:var(--card);padding:10px 14px;border-radius:10px;box-shadow:var(--shadow);display:flex;align-items:center;gap:12px}
+        .brand h1{margin:0;font-size:16px;font-weight:600;color:var(--accent)}
+        .brand p{margin:0;font-size:12px;color:var(--muted)}
+        .controls{display:flex;gap:10px;align-items:center}
+        select.metric-select{background:transparent;border:1px solid #e6e9ee;padding:8px 10px;border-radius:8px;font-size:13px}
+
+		/* overlay cards */
+		.card{background:var(--card);padding:12px;border-radius:10px;box-shadow:var(--shadow);overflow:hidden}
+		.map-overlay{position:absolute;z-index:2}
+		/* left column that stacks the info card and legend beneath it */
+		.left-column{position:absolute;left:12px;top:calc(var(--appbar-top) + var(--appbar-height) + var(--panel-gap));display:flex;flex-direction:column;gap:var(--panel-gap);width:320px;z-index:2}
+		.left-column .card{width:100%;}
+
+		/* info content */
+		#text-description h3{margin:0 0 6px 0;font-size:15px}
+		.stat-row{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #f1f3f5}
+		.stat-row:first-of-type{border-top:0;padding-top:0}
+		.stat-value{font-weight:600;color:var(--accent)}
+
+		/* legend */
+		.legend-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+		.legend-item{display:flex;align-items:center;gap:8px}
+		.legend-swatch{width:26px;height:12px;border-radius:4px;flex:0 0 26px}
+
+		/* responsive tweaks */
+		@media (max-width:600px){
+			.left-column{left:10px;right:10px;width:auto;top:64px}
+			#legend{display:none}
+			.brand p{display:none}
+		}
+	</style>
+</head>
+
+<body>
+	<div id="map"></div>
+
+	<div class="appbar">
+		<div class="brand">
+			<div>
+				<h1>Washington — COVID metrics</h1>
+				<p style="margin-top:4px">Cases / Deaths / Fully vaccinated (per 10k people)</p>
+			</div>
+			<div class="controls">
+				<label for="metric" style="font-size:13px;color:var(--muted)">Metric</label>
+				<select id="metric" class="metric-select">
+					<option value="casePer10k">Cases / 10k</option>
+					<option value="deathPer10k">Deaths / 10k</option>
+					<option value="fullyVaxPer10k">Fully vax / 10k</option>
+				</select>
+			</div>
+		</div>
+	</div>
+
+	<div class="map-overlay left-column">
+		<div class="card" id="info">
+			<div id="text-description">
+				<h3>Hover over a feature</h3>
+				<div class="stat-row"><div class="stat-label">Cases / 10k</div><div class="stat-value">—</div></div>
+				<div class="stat-row"><div class="stat-label">Deaths / 10k</div><div class="stat-value">—</div></div>
+				<div class="stat-row"><div class="stat-label">Fully vax / 10k</div><div class="stat-value">—</div></div>
+			</div>
+		</div>
+
+		<div class="card" id="legend">
+			<strong style="display:block">Cases per 10k</strong>
+			<div class="legend-list" id="legend-list"></div>
+		</div>
+	</div>
+
+	<script>
+		mapboxgl.accessToken = 'pk.eyJ1IjoiamFlZGVuY2NhIiwiYSI6ImNtaGM4cDNxdDI3cHkya3B1emRxYzJuNWQifQ.GD3_Rhp6YQw5CkRSFClT0w';
+
+		const map = new mapboxgl.Map({
+			container: 'map',
+			style: 'mapbox://styles/mapbox/light-v10',
+			// shift slightly to the left (west) so WA appears visually centered between the left column and the right edge
+			center: [-122.5, 47.5],
+			zoom: 6
+		});
+
+		// Metric configuration: property name, thresholds (step inputs), and colors (one more than thresholds)
+		const METRICS = {
+			casePer10k: {
+				label: 'Cases / 10k',
+				thresholds: [455,709,876,1221,1539,2020],
+				// diverging blue palette (RdBu reversed) — blue -> neutral -> red (7 colors)
+				colors: ['#2166ac','#4393c3','#92c5de','#d1e5f0','#fddbc7','#f4a582','#d6604d']
+			},
+			deathPer10k: {
+				label: 'Deaths / 10k',
+				// use six thresholds to match the 7 color stops (thresholds.length + 1 == colors.length)
+				thresholds: [5,10,15,18,22,31],
+				colors: ['#FFEDA0','#FED976','#FEB24C','#FD8D3C','#FC4E2A','#E31A1C','#BD0026']
+			},
+			fullyVaxPer10k: {
+				label: 'Fully vax / 10k',
+				thresholds: [3625,4226,4946,5467,6139,7354],
+				// diverging purple->green palette (low purple -> high green) — ColorBrewer PRGn 7 low->high
+				colors: ['#40004b','#762a83','#9970ab','#c2a5cf','#a6dba0','#5aae61','#1b7837']
+			}
+		};
+
+		// Build a Mapbox 'step' expression for the given property
+		function buildStepExpression(prop, thresholds, colors){
+			const expr = ['step', ['get', prop], colors[0]];
+			for(let i=0;i<thresholds.length;i++){
+				expr.push(thresholds[i]);
+				expr.push(colors[i+1]);
+			}
+			return expr;
+		}
+
+		// validate configs immediately
+		validateMetricConfigs();
+
+		function buildLegend(containerId, metricKey){
+			const cfg = METRICS[metricKey];
+			const legendList = document.getElementById(containerId);
+			legendList.innerHTML = '';
+			const thresholds = cfg.thresholds;
+			const colors = cfg.colors;
+
+			// Construct readable ranges from thresholds
+			const ranges = [];
+			ranges.push(`0 - ${thresholds[0]-1}`);
+			for(let i=0;i<thresholds.length-1;i++){
+				ranges.push(`${thresholds[i]} - ${thresholds[i+1]-1}`);
+			}
+			ranges.push(`${thresholds[thresholds.length-1]} +`);
+
+			ranges.forEach((r,i) => {
+				const item = document.createElement('div');
+				item.className = 'legend-item';
+				const sw = document.createElement('span');
+				sw.className = 'legend-swatch';
+				sw.style.background = colors[i];
+				const label = document.createElement('span');
+				label.textContent = r;
+				item.appendChild(sw);
+				item.appendChild(label);
+				legendList.appendChild(item);
+			});
+
+			// update title
+			const title = document.querySelector('#legend strong');
+			if(title) title.textContent = cfg.label;
+		}
+
+		// Update the map layer's fill-color based on the selected metric
+		function updateMapMetric(metricKey){
+			if(!map.getLayer('wa-covid-layer')) return;
+			const cfg = METRICS[metricKey];
+			const expr = buildStepExpression(cfg.propName || metricKey, cfg.thresholds, cfg.colors);
+			map.setPaintProperty('wa-covid-layer','fill-color', expr);
+			// rebuild legend
+			buildLegend('legend-list', metricKey);
+		}
+
+		// Simple config validation to ensure thresholds/colors align
+		function validateMetricConfigs(){
+			Object.keys(METRICS).forEach(k => {
+				const cfg = METRICS[k];
+				if(!cfg.colors || !cfg.thresholds) return;
+				if(cfg.colors.length !== cfg.thresholds.length + 1){
+					console.warn(`METRICS config mismatch for ${k}: colors.length=${cfg.colors.length} should be thresholds.length+1=${cfg.thresholds.length+1}`);
+				}
+			});
+		}
+
+		// Hook UI control and load data
+		async function loadCovidGeojson(){
+			const resp = await fetch('assets/wa-covid-data-102521.geojson');
+			const data = await resp.json();
+
+			map.on('load', () => {
+				map.addSource('wa-covid',{type:'geojson',data});
+
+				// initial paint uses casePer10k
+				const initial = 'casePer10k';
+				const initCfg = METRICS[initial];
+				// store propName same as key (kept flexible)
+				initCfg.propName = initial;
+
+				map.addLayer({
+					id:'wa-covid-layer',
+					type:'fill',
+					source:'wa-covid',
+					paint:{
+						'fill-color': buildStepExpression(initial, initCfg.thresholds, initCfg.colors),
+						'fill-outline-color':'rgba(30,30,30,0.12)',
+						'fill-opacity':0.85
+					}
+				});
+
+				// populate legend
+				buildLegend('legend-list', initial);
+
+				// ensure other metric configs have propName
+				Object.keys(METRICS).forEach(k => METRICS[k].propName = k);
+
+				// metric selector
+				const sel = document.getElementById('metric');
+				sel.addEventListener('change', (ev) => {
+					const key = ev.target.value;
+					updateMapMetric(key);
+					// update info card labels to reflect selected metric label
+					const label = METRICS[key].label;
+					// small UX: change the first stat-row label to selected metric
+					const statLabels = document.querySelectorAll('#info .stat-label');
+					if(statLabels && statLabels.length>0){
+						statLabels[0].textContent = label;
+					}
+				});
+
+				// hover: update all three stats as before
+				map.on('mousemove','wa-covid-layer', (e) => {
+					const p = e.features && e.features[0] && e.features[0].properties;
+					const box = document.getElementById('text-description');
+					if(p){
+						box.querySelector('h3').textContent = p.name || 'Unknown';
+						box.querySelectorAll('.stat-value')[0].textContent = p.casePer10k ?? 'n/a';
+						box.querySelectorAll('.stat-value')[1].textContent = p.deathPer10k ?? 'n/a';
+						box.querySelectorAll('.stat-value')[2].textContent = p.fullyVaxPer10k ?? 'n/a';
+					}
+				});
+
+				map.on('mouseleave','wa-covid-layer', () => {
+					const box = document.getElementById('text-description');
+					box.querySelector('h3').textContent = 'Hover over a feature';
+					box.querySelectorAll('.stat-value').forEach(v => v.textContent = '—');
+				});
+
+				map.on('mouseenter','wa-covid-layer', () => map.getCanvas().style.cursor = 'pointer');
+				map.on('mouseleave','wa-covid-layer', () => map.getCanvas().style.cursor = '');
+			});
+		}
+
+		// initialize legend content and ensure labels existing in info card have the .stat-label class
+		(function prepareInfoLabels(){
+			// ensure stat-label class exists on label spans
+			const labels = document.querySelectorAll('#info .stat-row .stat-label');
+			if(labels.length===0){
+				const rows = document.querySelectorAll('#info .stat-row');
+				rows.forEach((r, i) => {
+					const span = r.querySelector('div:first-child');
+					if(span) span.className = 'stat-label';
+				});
+			}
+		})();
+
+		loadCovidGeojson();
+	</script>
+</body>
+
+</html>
