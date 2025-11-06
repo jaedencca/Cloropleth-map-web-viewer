@@ -222,6 +222,29 @@
 					}
 				});
 
+				// add a temporary source + layers for hover highlight
+				map.addSource('hover-feature', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+				map.addLayer({
+					id: 'wa-covid-hover-fill',
+					type: 'fill',
+					source: 'hover-feature',
+					paint: {
+						'fill-color': '#ffffff',
+						'fill-opacity': 0.05
+					},
+					interactive: false
+				});
+				map.addLayer({
+					id: 'wa-covid-hover-line',
+					type: 'line',
+					source: 'hover-feature',
+					paint: {
+						'line-color': '#222222',
+						'line-width': 2
+					},
+					interactive: false
+				});
+
 				// populate legend
 				buildLegend('legend-list', initial);
 
@@ -251,6 +274,14 @@
 						box.querySelectorAll('.stat-value')[0].textContent = p.casePer10k ?? 'n/a';
 						box.querySelectorAll('.stat-value')[1].textContent = p.deathPer10k ?? 'n/a';
 						box.querySelectorAll('.stat-value')[2].textContent = p.fullyVaxPer10k ?? 'n/a';
+
+						// update hover-feature source so the hovered polygon is visually highlighted
+						try{
+							const hoveredFeature = e.features[0];
+							map.getSource('hover-feature').setData({ type: 'FeatureCollection', features: [hoveredFeature] });
+						} catch(err){
+							// ignore if source not ready
+						}
 					}
 				});
 
@@ -258,6 +289,11 @@
 					const box = document.getElementById('text-description');
 					box.querySelector('h3').textContent = 'Hover over a feature';
 					box.querySelectorAll('.stat-value').forEach(v => v.textContent = '—');
+
+					// clear hover highlight
+					try{
+						map.getSource('hover-feature').setData({ type: 'FeatureCollection', features: [] });
+					} catch(err){ /* ignore */ }
 				});
 
 				map.on('mouseenter','wa-covid-layer', () => map.getCanvas().style.cursor = 'pointer');
